@@ -4,7 +4,7 @@ from discord.ext import commands
 from flask import Flask
 from threading import Thread
 
-# 1. Flaskの設定
+# 1. Flaskの設定 (Render用)
 app = Flask(__name__)
 
 @app.route('/')
@@ -24,30 +24,32 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 async def on_ready():
     print(f'Logged in as {bot.user}')
 
-# 3. ボタンが押された時の処理（ログ出力付き）
+# 3. ボタンが押された時の処理（全サーバー対応版）
 @bot.event
 async def on_interaction(interaction: discord.Interaction):
-    # 信号が来ているかログ確認
-    print(f"DEBUG: Interaction received: {interaction.data.get('custom_id')}")
-    
     if interaction.data.get("custom_id") == "create_ticket":
+        print(f"DEBUG: 受信 - {interaction.user.name} がチケット作成ボタンを押しました")
+        
         try:
             guild = interaction.guild
             user = interaction.user
             
-            # ロールID
-            kanbu_id = 1311590141671899158
-            kansatu_id = 1369118761352826890
+            # 【重要】ロール名で検索（どのサーバーでも名前さえあればOK）
+            # ロール名がサーバーの表記と完全に一致している必要があります
+            kanbu_role = discord.utils.get(guild.roles, name="幹部自衛官")
+            kansatu_role = discord.utils.get(guild.roles, name="監察課【ID】--Inspector Division")
             
-            kanbu_role = guild.get_role(kanbu_id)
-            kansatu_role = guild.get_role(kansatu_id)
+            print(f"DEBUG: 検索結果 - 幹部: {kanbu_role}, 監察課: {kansatu_role}")
             
             overwrites = {
                 guild.default_role: discord.PermissionOverwrite(read_messages=False),
                 user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
             }
-            if kanbu_role: overwrites[kanbu_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
-            if kansatu_role: overwrites[kansatu_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+            
+            if kanbu_role:
+                overwrites[kanbu_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+            if kansatu_role:
+                overwrites[kansatu_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
             
             # チャンネル名決定
             count = 1
@@ -61,17 +63,23 @@ async def on_interaction(interaction: discord.Interaction):
             new_channel = await guild.create_text_channel(channel_name, overwrites=overwrites)
             
             await interaction.response.send_message(f"チケットを作成しました: {new_channel.mention}", ephemeral=True)
-            print(f"DEBUG: Channel {channel_name} created.")
+            print(f"DEBUG: 成功 - {channel_name} を作成しました")
             
         except Exception as e:
-            # エラー内容をログに強制出力
-            print(f"DEBUG ERROR: {e}")
-            await interaction.response.send_message(f"エラー発生: {e}", ephemeral=True)
+            error_msg = f"エラー発生: {e}"
+            print(f"DEBUG ERROR: {error_msg}")
+            # エラーを直接Discordに通知
+            if not interaction.response.is_done():
+                await interaction.response.send_message(error_msg, ephemeral=True)
 
-# 4. コマンド
+# 4. コマンド (!ticket)
 @bot.command()
-@commands.has_any_role("監察課【ID】--Inspector Division", "幹部自衛官")
 async def ticket(ctx):
+    # メッセージの送受信チェック
+    if not ctx.channel.permissions_for(ctx.guild.me).send_messages:
+        print("DEBUG: このチャンネルで発言権限がありません")
+        return
+
     view = discord.ui.View()
     button = discord.ui.Button(label="チケット作成", style=discord.ButtonStyle.primary, custom_id="create_ticket")
     view.add_item(button)
