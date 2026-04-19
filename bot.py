@@ -12,12 +12,13 @@ def home():
     return "Bot is running!"
 
 def run_web():
-    # Renderは10000ポートを使用することが多いため指定
-    app.run(host='0.0.0.0', port=10000)
+    # Renderが指定するポート（PORT環境変数）を優先し、なければ10000を使う
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
 
 # 2. Discordボットの設定
 intents = discord.Intents.default()
-intents.message_content = True  # メッセージを読み込む権限
+intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 @bot.event
@@ -29,12 +30,10 @@ async def on_ready():
 @commands.has_any_role("監察課【ID】--Inspector Division", "幹部自衛官")
 async def ticket(ctx):
     view = discord.ui.View()
-    # custom_id はGAS側で識別する際に使います
     button = discord.ui.Button(label="チケット作成", style=discord.ButtonStyle.primary, custom_id="create_ticket")
     view.add_item(button)
     await ctx.send("以下のボタンを押してチケットを作成してください。", view=view)
 
-# 権限がない時のエラーハンドリング
 @ticket.error
 async def ticket_error(ctx, error):
     if isinstance(error, commands.MissingAnyRole):
@@ -44,5 +43,5 @@ async def ticket_error(ctx, error):
 if __name__ == "__main__":
     # Webサーバーを別スレッドで起動
     Thread(target=run_web).start()
-    # Discordボットを起動（Renderの環境変数TOKENを使用）
+    # Discordボットを起動
     bot.run(os.environ["TOKEN"])
