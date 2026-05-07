@@ -4,7 +4,7 @@ from discord.ext import commands
 from flask import Flask
 from threading import Thread
 
-# 1. Flaskの設定 (Render用)
+# --- 1. Flaskの設定 (Render/Replit維持用) ---
 app = Flask(__name__)
 
 @app.route('/')
@@ -12,35 +12,84 @@ def home():
     return "Bot is running!"
 
 def run_web():
+    # ポート番号は環境変数から取得（デフォルト10000）
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
-# 2. Discordボットの設定
+# --- 2. Discordボットの設定 ---
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents)
+intents.voice_states = True  # VC接続に必要
+bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
 @bot.event
 async def on_ready():
     print(f'Logged in as {bot.user}')
 
-# 3. ボタンが押された時の処理（全サーバー対応版）
+# --- 3. !help コマンド ---
+@bot.command()
+async def help(ctx):
+    help_msg = """
+📜 **Bot コマンド一覧**
+
+`!ticket` : チケット作成用のボタンパネルを表示します。
+`!vc` : あなたが現在参加しているボイスチャンネルにBotを接続させます。
+`!dc` : ボイスチャンネルからBotを退出させます。
+    """
+    await ctx.send(help_msg)
+
+# --- 4. !vc コマンド ---
+@bot.command()
+async def vc(ctx):
+    # 実行者がVCに入っているかチェック
+    if ctx.author.voice and ctx.author.voice.channel:
+        channel = ctx.author.voice.channel
+        try:
+            await channel.connect()
+            await ctx.send(f"✅ **{channel.name}** に接続しました！")
+        except Exception as e:
+            await ctx.send(f"❌ 接続中にエラーが発生しました: {e}")
+    else:
+        # VCに入っていない場合
+        await ctx.send(f"❌ **{ctx.author.name}** さんがVCにいません。")
+
+# 切断コマンドも念のため追加
+@bot.command()
+async def dc(ctx):
+    if ctx.voice_client:
+        await ctx.voice_client.disconnect()
+        await ctx.send("👋 切断しました。")
+    else:
+        await ctx.send("❌ BotはVCに参加していません。")
+
+# --- 5. チケットパネル表示コマンド ---
+@bot.command()
+async def ticket(ctx):
+    if not ctx.channel.permissions_for(ctx.guild.me).send_messages:
+        return
+
+    view = discord.ui.View()
+    button = discord.ui.Button(
+        label="チケット作成", 
+        style=discord.ButtonStyle.primary, 
+        custom_id="create_ticket"
+    )
+    view.add_item(button)
+    await ctx.send("以下のボタンを押してチケットを作成してください。", view=view)
+
+# --- 6. ボタン処理（チケット作成） ---
 @bot.event
 async def on_interaction(interaction: discord.Interaction):
     if interaction.data.get("custom_id") == "create_ticket":
-        print(f"DEBUG: 受信 - {interaction.user.name} がチケット作成ボタンを押しました")
-        
         try:
             guild = interaction.guild
             user = interaction.user
             
-            # 【重要】ロール名で検索（どのサーバーでも名前さえあればOK）
-            # ロール名がサーバーの表記と完全に一致している必要があります
+            # ロール名で検索
             kanbu_role = discord.utils.get(guild.roles, name="幹部自衛官")
             kansatu_role = discord.utils.get(guild.roles, name="監察課【ID】--Inspector Division")
             
-            print(f"DEBUG: 検索結果 - 幹部: {kanbu_role}, 監察課: {kansatu_role}")
-            
+            # 権限設定（本人のみ、および指定ロールのみ閲覧可能）
             overwrites = {
                 guild.default_role: discord.PermissionOverwrite(read_messages=False),
                 user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
@@ -51,7 +100,7 @@ async def on_interaction(interaction: discord.Interaction):
             if kansatu_role:
                 overwrites[kansatu_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
             
-            # チャンネル名決定
+            # チャンネル名の重複回避
             count = 1
             base_name = f"ticket-{user.name.lower()}"
             channel_name = base_name
@@ -61,31 +110,15 @@ async def on_interaction(interaction: discord.Interaction):
             
             # チャンネル作成
             new_channel = await guild.create_text_channel(channel_name, overwrites=overwrites)
-            
             await interaction.response.send_message(f"チケットを作成しました: {new_channel.mention}", ephemeral=True)
-            print(f"DEBUG: 成功 - {channel_name} を作成しました")
             
         except Exception as e:
-            error_msg = f"エラー発生: {e}"
-            print(f"DEBUG ERROR: {error_msg}")
-            # エラーを直接Discordに通知
             if not interaction.response.is_done():
-                await interaction.response.send_message(error_msg, ephemeral=True)
+                await interaction.response.send_message(f"エラー発生: {e}", ephemeral=True)
 
-# 4. コマンド (!ticket)
-@bot.command()
-async def ticket(ctx):
-    # メッセージの送受信チェック
-    if not ctx.channel.permissions_for(ctx.guild.me).send_messages:
-        print("DEBUG: このチャンネルで発言権限がありません")
-        return
-
-    view = discord.ui.View()
-    button = discord.ui.Button(label="チケット作成", style=discord.ButtonStyle.primary, custom_id="create_ticket")
-    view.add_item(button)
-    await ctx.send("以下のボタンを押してチケットを作成してください。", view=view)
-
-# 5. 起動
+# --- 7. 起動 ---
 if __name__ == "__main__":
+    # Webサーバー（Flask）を別スレッドで開始
     Thread(target=run_web).start()
+    # Botを起動
     bot.run(os.environ["TOKEN"])
